@@ -1,0 +1,33 @@
+name: build-apk
+
+on:
+  workflow_dispatch: {}   # دستی اجرا می‌کنی
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: System deps
+        run: |
+          sudo apt update
+          sudo apt install -y git python3-pip python3-venv openjdk-17-jdk unzip \
+            libffi-dev libssl-dev build-essential libstdc++6
+          python3 -m pip install --upgrade pip
+
+      - name: Install buildozer
+        run: |
+          python3 -m pip install cython buildozer
+
+      - name: Build APK (debug)
+        run: |
+          buildozer android debug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: arbtracker-apk
+          path: bin/*.apk
