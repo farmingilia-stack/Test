@@ -6,6 +6,12 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+      ANDROIDSDK: /usr/local/lib/android/sdk
+      ANDROIDNDK: /usr/local/lib/android/ndk
+      ANDROID_NDK_HOME: /usr/local/lib/android/ndk
 
     steps:
       - name: Checkout
@@ -13,18 +19,21 @@ jobs:
 
       - name: System deps
         run: |
-          sudo apt update
-          sudo apt install -y git python3-pip python3-venv openjdk-17-jdk unzip \
-            libffi-dev libssl-dev build-essential libstdc++6
-
-      - name: Upgrade pip + install buildozer
-        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-pip python3-venv openjdk-17-jdk unzip git \
+              libffi-dev libssl-dev zlib1g-dev libbz2-dev libsqlite3-dev libncurses5
           python3 -m pip install --upgrade pip
           python3 -m pip install cython buildozer
 
+      - name: Accept Android licenses + install SDK packages
+        run: |
+          yes | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager --licenses || true
+          ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager \
+            "platform-tools" "platforms;android-33" "build-tools;33.0.2"
+
       - name: Build APK (debug)
         run: |
-          buildozer android debug
+          buildozer -v android debug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
