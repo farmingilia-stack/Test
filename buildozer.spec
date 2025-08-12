@@ -16,8 +16,6 @@ android.permissions = INTERNET
 android.api = 33
 android.minapi = 24
 android.build_tools = 33.0.2
-
-# اجبار به استفاده از SDK/NDK بیرونی (همان‌هایی که در workflow نصب می‌کنیم)
 android.sdk_path = /usr/local/lib/android/sdk
 android.ndk_path = /usr/local/lib/android/sdk/ndk-bundle
 android.accept_sdk_license = True
