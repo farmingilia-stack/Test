@@ -9,9 +9,6 @@ jobs:
     env:
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
       ANDROID_HOME: /usr/local/lib/android/sdk
-      ANDROIDSDK: /usr/local/lib/android/sdk
-      ANDROID_NDK_HOME: /usr/local/lib/android/sdk/ndk-bundle
-      ANDROIDNDK: /usr/local/lib/android/sdk/ndk-bundle
       JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
 
     steps:
@@ -21,43 +18,30 @@ jobs:
       - name: Install system deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3-pip openjdk-17-jdk unzip curl git \
-                                  libffi-dev libssl-dev zlib1g-dev libbz2-dev libsqlite3-dev
+          sudo apt-get install -y python3-pip openjdk-17-jdk unzip curl git libffi-dev libssl-dev
           python3 -m pip install --upgrade pip
           python3 -m pip install cython buildozer
 
-      - name: Install Android cmdline-tools (sdkmanager)
+      - name: Install Android cmdline-tools & SDK
         run: |
-          set -e
-          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
-          if [ ! -x "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
-            curl -L -o cmdtools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-            mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools/latest"
-            unzip -q cmdtools.zip -d "$ANDROID_SDK_ROOT/cmdline-tools"
-            mv "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools" "$ANDROID_SDK_ROOT/cmdline-tools/latest"
-          fi
-
-      - name: Accept licenses & install SDK/NDK packages
-        run: |
-          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+          curl -o sdk.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          unzip -q sdk.zip -d "$ANDROID_SDK_ROOT/cmdline-tools"
+          mv "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools" "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses
           "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
             "platform-tools" "platforms;android-33" "build-tools;33.0.2" "ndk;25.2.9519653"
-          # جابجایی NDK به مسیر استانداردی که پ4ا/بیلدوزر می‌شناسند
-          mv "$ANDROID_SDK_ROOT/ndk/25.2.9519653" "$ANDROID_SDK_ROOT/ndk-bundle"
 
-      - name: Force Buildozer to use external SDK/NDK (symlinks)
+      - name: Link SDK/NDK to Buildozer paths
         run: |
           mkdir -p /home/runner/.buildozer/android/platform
           ln -sfn "$ANDROID_SDK_ROOT" /home/runner/.buildozer/android/platform/android-sdk
-          ln -sfn "$ANDROID_SDK_ROOT/ndk-bundle" /home/runner/.buildozer/android/platform/android-ndk
-          # چک سریع برای وجود aidl در build-tools
-          ls -l "$ANDROID_SDK_ROOT/build-tools/33.0.2/aidl"
+          ln -sfn "$ANDROID_SDK_ROOT/ndk/25.2.9519653" /home/runner/.buildozer/android/platform/android-ndk
+          mkdir -p /home/runner/.buildozer/android/platform/android-sdk/tools/bin
+          ln -sfn "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" /home/runner/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager
 
       - name: Build APK (debug)
-        run: |
-          echo "SDK -> $(readlink -f /home/runner/.buildozer/android/platform/android-sdk)"
-          echo "NDK -> $(readlink -f /home/runner/.buildozer/android/platform/android-ndk)"
-          buildozer -v android debug
+        run: buildozer -v android debug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
