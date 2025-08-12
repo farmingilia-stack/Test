@@ -9,9 +9,9 @@ jobs:
     env:
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
       ANDROID_HOME: /usr/local/lib/android/sdk
-      ANDROIDSDK: /usr/local/lib/android/sdk       # بیلدوزر این را می‌خواند
-      ANDROID_NDK_HOME: /usr/local/lib/android/ndk
-      ANDROIDNDK: /usr/local/lib/android/ndk       # بیلدوزر این را هم می‌خواند
+      ANDROIDSDK: /usr/local/lib/android/sdk
+      ANDROID_NDK_HOME: /usr/local/lib/android/sdk/ndk-bundle
+      ANDROIDNDK: /usr/local/lib/android/sdk/ndk-bundle
       JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
 
     steps:
@@ -36,18 +36,19 @@ jobs:
             unzip -q cmdtools.zip -d "$ANDROID_SDK_ROOT/cmdline-tools"
             mv "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools" "$ANDROID_SDK_ROOT/cmdline-tools/latest"
           fi
-          echo "sdkmanager at: $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
 
       - name: Accept licenses & install SDK/NDK packages
         run: |
           yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses || true
           "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
             "platform-tools" "platforms;android-33" "build-tools;33.0.2" "ndk;25.2.9519653"
-          ln -sfn "$ANDROID_SDK_ROOT/ndk/25.2.9519653" "$ANDROID_NDK_HOME"
+          # جابه‌جایی NDK به مسیر قابل‌نوشتن (بدون نیاز به sudo/link)
+          mv "$ANDROID_SDK_ROOT/ndk/25.2.9519653" "$ANDROID_SDK_ROOT/ndk-bundle"
 
       - name: Build APK (debug)
         run: |
-          echo "Using external SDK at $ANDROIDSDK"
+          echo "SDK: $ANDROIDSDK"
+          echo "NDK: $ANDROID_NDK_HOME"
           buildozer -v android debug
 
       - name: Upload APK
