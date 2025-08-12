@@ -42,13 +42,21 @@ jobs:
           yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses || true
           "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
             "platform-tools" "platforms;android-33" "build-tools;33.0.2" "ndk;25.2.9519653"
-          # جابه‌جایی NDK به مسیر قابل‌نوشتن (بدون نیاز به sudo/link)
+          # جابجایی NDK به مسیر استانداردی که پ4ا/بیلدوزر می‌شناسند
           mv "$ANDROID_SDK_ROOT/ndk/25.2.9519653" "$ANDROID_SDK_ROOT/ndk-bundle"
+
+      - name: Force Buildozer to use external SDK/NDK (symlinks)
+        run: |
+          mkdir -p /home/runner/.buildozer/android/platform
+          ln -sfn "$ANDROID_SDK_ROOT" /home/runner/.buildozer/android/platform/android-sdk
+          ln -sfn "$ANDROID_SDK_ROOT/ndk-bundle" /home/runner/.buildozer/android/platform/android-ndk
+          # چک سریع برای وجود aidl در build-tools
+          ls -l "$ANDROID_SDK_ROOT/build-tools/33.0.2/aidl"
 
       - name: Build APK (debug)
         run: |
-          echo "SDK: $ANDROIDSDK"
-          echo "NDK: $ANDROID_NDK_HOME"
+          echo "SDK -> $(readlink -f /home/runner/.buildozer/android/platform/android-sdk)"
+          echo "NDK -> $(readlink -f /home/runner/.buildozer/android/platform/android-ndk)"
           buildozer -v android debug
 
       - name: Upload APK
