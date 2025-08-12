@@ -1,34 +1,42 @@
-name: build-apk
+name: Build Android APK
 
 on:
-  workflow_dispatch:  # اجرا دستی از تب Actions
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-22.04
     env:
-      ANDROID_HOME: /usr/local/lib/android/sdk
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
-      ANDROIDSDK: /usr/local/lib/android/sdk
-      ANDROIDNDK: /usr/local/lib/android/ndk
-      ANDROID_NDK_HOME: /usr/local/lib/android/ndk
+      ANDROID_HOME: /usr/local/lib/android/sdk
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: System deps
+      - name: Install system deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3-pip python3-venv openjdk-17-jdk unzip git \
-              libffi-dev libssl-dev zlib1g-dev libbz2-dev libsqlite3-dev libncurses5
+          sudo apt-get install -y python3-pip openjdk-17-jdk unzip curl
           python3 -m pip install --upgrade pip
           python3 -m pip install cython buildozer
 
-      - name: Accept Android licenses + install SDK packages
+      - name: Install Android cmdline-tools (if missing)
         run: |
-          yes | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager --licenses || true
-          ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager \
+          set -e
+          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
+          if [ ! -x "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
+            curl -L -o cmdtools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+            mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+            unzip -q cmdtools.zip -d "$ANDROID_SDK_ROOT/cmdline-tools"
+            mv "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools" "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+          fi
+          echo "sdkmanager ready at: $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+
+      - name: Accept licenses & install SDK packages
+        run: |
+          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
             "platform-tools" "platforms;android-33" "build-tools;33.0.2"
 
       - name: Build APK (debug)
@@ -38,5 +46,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: arbtracker-apk
+          name: app-apk
           path: bin/*.apk
