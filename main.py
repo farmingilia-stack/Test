@@ -1,257 +1,407 @@
-# main.py
 # -*- coding: utf-8 -*-
-import time, requests
-from collections import defaultdict
-from threading import Thread
-from kivy.clock import Clock
-from kivy.metrics import dp
-from kivy.core.window import Window
+import threading, time, requests
+from functools import partial
+from datetime import datetime
+
 from kivy.app import App
+from kivy.clock import Clock, mainthread
+from kivy.core.window import Window
+from kivy.metrics import dp, sp
 from kivy.uix.boxlayout import BoxLayout
-from kivy.uix.label import Label
-from kivy.uix.scrollview import ScrollView
 from kivy.uix.gridlayout import GridLayout
+from kivy.uix.label import Label
+from kivy.uix.textinput import TextInput
+from kivy.uix.button import Button
+from kivy.uix.checkbox import CheckBox
+from kivy.uix.popup import Popup
+from kivy.uix.scrollview import ScrollView
+from kivy.uix.spinner import Spinner
 
-# ---------- settings ----------
-TIMEOUT=12; RETRIES=2; SLP=0.15
-EXCHANGES = ["okx","kucoin","gate"]   # strict/verified
-FEES_TRADE={"okx":0.0008,"kucoin":0.001,"gate":0.001}
-WITHDRAW_BASE_FEES={"BTC":{"BTC":0.0002},"ETH":{"ERC20":0.003}}  # sample
-CONFLICTS={"ALTLAYER":{"aliases":{"okx":["ALT"],"gate":["ALT"]}}}
-NOTIONAL=1000.0; MIN_PCT=0.01; MIN_ABS=0.05
-QUOTES=("USDT","USDC")
+# ----------------------- Defaults -----------------------
+DEFAULT_EXCHANGES = ["okx", "kucoin", "gate"]
+DEFAULT_QUOTE = "USDT"
 
-# ---------- http ----------
-def http_get(url, params=None, headers=None):
-    for _ in range(RETRIES):
+USER_AGENT = {"User-Agent": "Mozilla/5.0 ArbTracker/Android"}
+REQ_TIMEOUT = 10
+
+# جدول: عنوان، عرض به dp
+COLS = [
+    ("Symbol", 140),
+    ("Buy(Ask)", 170),
+    ("Sell(Bid)", 170),
+    ("Net %", 100),
+    ("Abs Profit", 120),
+    ("Vol(k$)", 100),
+    ("Transfer Fee", 110),
+    ("Network", 110),
+    ("Canon", 90),
+]
+
+# ----------------------- HTTP utils -----------------------
+def http_get(url, timeout=REQ_TIMEOUT):
+    try:
+        r = requests.get(url, timeout=timeout, headers=USER_AGENT)
+        r.raise_for_status()
+        return r.json()
+    except Exception:
+        return None
+
+# ----------------------- Public fetchers (no key) -----------------------
+# خروجی هر fetcher:
+# { "BASE/QUOTE": {"ask": float, "bid": float, "qv": float(QuoteVolume 24h $)} }
+
+def fetch_okx():
+    url = "https://www.okx.com/api/v5/market/tickers?instType=SPOT"
+    data = http_get(url)
+    out = {}
+    if not data or data.get("code") != "0":
+        return out
+    for it in data.get("data", []):
+        inst = it.get("instId", "")
+        if inst.count("-") != 1:
+            continue
+        base, quote = inst.split("-")
         try:
-            r=requests.get(url, params=params, headers=headers, timeout=TIMEOUT)
-            if r.status_code>=400: time.sleep(0.4); continue
-            return r.json()
+            ask = float(it.get("askPx") or 0) or 0.0
+            bid = float(it.get("bidPx") or 0) or 0.0
         except Exception:
-            time.sleep(0.6)
-    return None
-
-def normalize_symbol(s):
-    s=(s or "").upper()
-    if '-' in s: b,q=s.split('-')
-    elif '_' in s: b,q=s.split('_')
-    else:
-        QS=["USDT","USDC","BTC","ETH","EUR","USD","BUSD","TRY","UST"]
-        q=None
-        for e in sorted(QS,key=len,reverse=True):
-            if s.endswith(e): q=e; b=s[:-len(e)]; break
-        if not q: return s
-        if q=="UST": q="USDT"
-    return f"{b}/{q}"
-
-# ---------- orderbooks ----------
-def f_okx():
-    out={}; j=http_get("https://www.okx.com/api/v5/market/tickers",{"instType":"SPOT"}) or {}
-    for it in j.get("data",[]):
-        sym=normalize_symbol(it.get("instId",""))
-        try: bid=float(it["bidPx"]); ask=float(it["askPx"])
-        except: continue
-        if bid>0 and ask>0: out[sym]={"bid":bid,"ask":ask}
+            continue
+        # حجم: okx volCcy24h (quote) / vol24h (base) و last
+        qv = 0.0
+        try:
+            qv = float(it.get("volCcy24h") or 0) or 0.0
+            if qv == 0.0:
+                base_vol = float(it.get("vol24h") or 0) or 0.0
+                last = float(it.get("last") or 0) or 0.0
+                qv = base_vol * last
+        except Exception:
+            pass
+        out[f"{base}/{quote}"] = {"ask": ask, "bid": bid, "qv": qv}
     return out
 
-def f_kucoin():
-    out={}; j=http_get("https://api.kucoin.com/api/v1/market/allTickers") or {}
-    for it in j.get("data",{}).get("ticker",[]):
-        sym=normalize_symbol(it.get("symbol",""))
-        try: bid=float(it["bestBid"]); ask=float(it["bestAsk"])
-        except: continue
-        if bid>0 and ask>0: out[sym]={"bid":bid,"ask":ask}
+def fetch_kucoin():
+    url = "https://api.kucoin.com/api/v1/market/allTickers"
+    data = http_get(url)
+    out = {}
+    if not data or data.get("code") != "200000":
+        return out
+    for it in data.get("data", {}).get("ticker", []):
+        sym = (it.get("symbol") or "").upper().replace("-", "/")
+        try:
+            ask = float(it.get("sell") or 0) or 0.0  # kucoin: sell=best ask
+            bid = float(it.get("buy") or 0) or 0.0   # kucoin: buy =best bid
+        except Exception:
+            continue
+        qv = 0.0
+        try:
+            qv = float(it.get("volValue") or 0) or 0.0  # quote volume USD-ish
+            if qv == 0.0:
+                base_vol = float(it.get("vol") or 0) or 0.0
+                last = float(it.get("last") or 0) or 0.0
+                qv = base_vol * last
+        except Exception:
+            pass
+        out[sym] = {"ask": ask, "bid": bid, "qv": qv}
     return out
 
-def f_gate():
-    out={}; j=http_get("https://api.gateio.ws/api/v4/spot/tickers") or []
-    for it in j:
-        sym=normalize_symbol(it.get("currency_pair",""))
-        try: bid=float(it["highest_bid"]); ask=float(it["lowest_ask"])
-        except: continue
-        if bid>0 and ask>0: out[sym]={"bid":bid,"ask":ask}
+def fetch_gate():
+    url = "https://api.gateio.ws/api/v4/spot/tickers"
+    data = http_get(url)
+    out = {}
+    if not isinstance(data, list):
+        return out
+    for it in data:
+        sym = (it.get("currency_pair") or "").upper().replace("_", "/")
+        try:
+            ask = float(it.get("lowest_ask") or 0) or 0.0
+            bid = float(it.get("highest_bid") or 0) or 0.0
+        except Exception:
+            continue
+        qv = 0.0
+        try:
+            qv = float(it.get("quote_volume") or 0) or 0.0
+        except Exception:
+            pass
+        out[sym] = {"ask": ask, "bid": bid, "qv": qv}
     return out
 
-FETCHERS={"okx":f_okx,"kucoin":f_kucoin,"gate":f_gate}
+FETCHERS = {"okx": fetch_okx, "kucoin": fetch_kucoin, "gate": fetch_gate}
 
-# ---------- base metadata ----------
-def meta_okx():
-    names=defaultdict(dict); nets=defaultdict(lambda: defaultdict(dict))
-    j=http_get("https://www.okx.com/api/v5/asset/currencies") or {}
-    for it in j.get("data",[]):
-        b=(it.get("ccy") or "").upper(); chain=(it.get("chain") or "").upper()
-        if not b or not chain: continue
-        net=chain.split("-",1)[1] if "-" in chain else chain
-        dep=str(it.get("canDep","1"))=="1"; wd=str(it.get("canWd","1"))=="1"
-        c=(it.get("ctAddr") or "").strip() or None
-        nets[b][net]={"dep":dep,"wd":wd,"contract":c}
-    return names,nets
+# ----------------------- Core scan -----------------------
+def aggregate_books(exchanges, quote="USDT"):
+    books = {}
+    vols = {}
+    for ex in exchanges:
+        fn = FETCHERS.get(ex)
+        if not fn:
+            continue
+        data = fn()
+        for sym, v in data.items():
+            if not sym.endswith("/" + quote):
+                continue
+            books.setdefault(sym, {})[ex] = {"ask": v["ask"], "bid": v["bid"]}
+            vols.setdefault(sym, {})[ex] = v.get("qv", 0.0)
+    return books, vols
 
-def meta_kucoin():
-    names=defaultdict(dict); nets=defaultdict(lambda: defaultdict(dict))
-    j=http_get("https://api.kucoin.com/api/v1/currencies") or {}
-    for it in j.get("data",[]):
-        b=(it.get("currency") or "").upper()
-        full=(it.get("fullName") or it.get("name") or "").strip().lower()
-        if b and full: names[b]["full_name"]=full
-        for ch in it.get("chains",[]):
-            net=(ch.get("chainName") or "").upper()
-            dep=bool(ch.get("isDepositEnabled",True)); wd=bool(ch.get("isWithdrawEnabled",True))
-            c=(ch.get("contractAddress") or "").strip() or None
-            if b and net: nets[b][net]={"dep":dep,"wd":wd,"contract":c}
-    return names,nets
+def find_opps(books, vols, notional=1000.0, min_pct=0.05, min_abs=0.5,
+              min_qv_usd=0.0, safe_bases=None, strict_name=False, strict_network=False):
+    rows = []
+    safe_set = set([s.strip().upper() for s in (safe_bases or []) if s.strip()])
+    for sym, exmap in books.items():
+        base, quote = sym.split("/")
+        # فیلتر «Strict name»: اگر لیست امن ارائه شده، فقط همان‌ها
+        if strict_name and safe_set and base not in safe_set:
+            continue
+        if len(exmap) < 2:
+            continue
+        for buy_ex, buy in exmap.items():
+            for sell_ex, sell in exmap.items():
+                if buy_ex == sell_ex:
+                    continue
+                ask, bid = buy["ask"], sell["bid"]
+                if ask <= 0 or bid <= 0:
+                    continue
+                # حداقل حجم 24h در هر دو صرافی (Quote volume به دلار تقریبی)
+                qv_buy = max(0.0, vols.get(sym, {}).get(buy_ex, 0.0))
+                qv_sell = max(0.0, vols.get(sym, {}).get(sell_ex, 0.0))
+                if min_qv_usd > 0 and (qv_buy < min_qv_usd or qv_sell < min_qv_usd):
+                    continue
+                # Strict network: با API عمومی نداریم => خروجی صفر برای جلوگیری از سیگنال اشتباه
+                if strict_network:
+                    continue
 
-def meta_gate():
-    names=defaultdict(dict); nets=defaultdict(lambda: defaultdict(dict))
-    j=http_get("https://api.gateio.ws/api/v4/spot/currencies") or []
-    for it in j:
-        b=(it.get("currency") or "").upper()
-        full=(it.get("name") or "").strip().lower()
-        net=(it.get("chain") or "").upper()
-        dep=(it.get("deposit_disabled") in [0,False,None]); wd=(it.get("withdraw_disabled") in [0,False,None])
-        if b and full: names[b]["full_name"]=full
-        if b and net: nets[b][net]={"dep":dep,"wd":wd,"contract":None}
-    return names,nets
+                pct = (bid - ask) / ask * 100.0
+                abs_profit = (bid - ask) * (notional / max(ask, 1e-12))
+                if pct >= min_pct and abs_profit >= min_abs:
+                    volk = min(qv_buy, qv_sell) / 1000.0
+                    rows.append({
+                        "symbol": sym,
+                        "buy": f"{buy_ex}@{ask:.10f}".rstrip('0').rstrip('.'),
+                        "sell": f"{sell_ex}@{bid:.10f}".rstrip('0').rstrip('.'),
+                        "pct": pct, "abs": abs_profit,
+                        "volk": volk, "fee": "0", "net": "—", "canon": "—",
+                    })
+    rows.sort(key=lambda r: (r["pct"], r["volk"]), reverse=True)
+    return rows
 
-META_FETCH={"okx":meta_okx,"kucoin":meta_kucoin,"gate":meta_gate}
+# ----------------------- UI -----------------------
+class ExchangesPopup(Popup):
+    def __init__(self, selected, on_apply, **kwargs):
+        super().__init__(**kwargs)
+        self.title = "Select Exchanges"
+        self.size_hint = (0.9, 0.7)
+        self.auto_dismiss = False
+        self._selected = set(selected)
 
-def build_meta(exs):
-    names_map={}; nets_map={}
-    for ex in exs:
-        try: nm,ns = META_FETCH[ex]()
-        except Exception: nm,ns = {},{}
-        names_map[ex]=nm; nets_map[ex]=ns; time.sleep(SLP)
-    return names_map,nets_map
+        root = BoxLayout(orientation="vertical", padding=dp(10), spacing=dp(10))
+        grid = GridLayout(cols=2, spacing=dp(8), size_hint_y=None)
+        grid.bind(minimum_height=grid.setter("height"))
 
-def canonical_name(ex, base, names_map):
-    b=base.upper()
-    nm=names_map.get(ex,{}).get(b,{}).get("full_name","")
-    canon=(nm or b).strip().lower()
-    for C,cfg in CONFLICTS.items():
-        aliases=cfg.get("aliases",{})
-        if ex in aliases and b in [t.upper() for t in aliases[ex]]: return C.lower()
-    return canon
+        for ex in DEFAULT_EXCHANGES:
+            row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(36), spacing=dp(6))
+            cb = CheckBox(active=(ex in self._selected), size_hint=(None, None), size=(dp(24), dp(24)))
+            def _toggle(instance, val, exname=ex):
+                if instance.active: self._selected.add(exname)
+                else: self._selected.discard(exname)
+            cb.bind(active=_toggle)
+            row.add_widget(cb)
+            row.add_widget(Label(text=ex.upper(), font_size=sp(15), halign="left", valign="middle"))
+            grid.add_widget(row)
 
-def aggregate(exs):
-    books=defaultdict(dict)
-    for ex in exs:
-        try: data=FETCHERS[ex]()
-        except Exception: data=None
-        if not data: continue
-        for sym,ba in data.items(): books[sym][ex]=ba
-        time.sleep(SLP)
-    return books
+        sv = ScrollView(size_hint=(1,1), do_scroll_x=False, do_scroll_y=True, bar_width=dp(6))
+        sv.add_widget(grid)
+        root.add_widget(sv)
 
-def pick_base_net(base, sell_ex, buy_ex, nets_map):
-    b=base.upper()
-    sell=nets_map.get(sell_ex,{}).get(b,{})
-    buy =nets_map.get(buy_ex ,{}).get(b,{})
-    feas=[]
-    for net in set(sell.keys()) & set(buy.keys()):
-        if sell[net].get("wd",False) and buy[net].get("dep",False):
-            c1=sell[net].get("contract"); c2=buy[net].get("contract")
-            if c1 and c2 and (c1.strip().lower()!=c2.strip().lower()): continue
-            feas.append(net)
-    return feas[0] if feas else None
+        btns = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(48), spacing=dp(10))
+        btns.add_widget(Button(text="Cancel", on_release=lambda *_: self.dismiss()))
+        btns.add_widget(Button(text="Apply", on_release=lambda *_: (on_apply(sorted(self._selected)), self.dismiss())))
+        root.add_widget(btns)
 
-def withdraw_fee_in_quote(base, net, sell_bid):
-    fee_base={"BTC":{"BTC":0.0002},"ETH":{"ERC20":0.003}}.get(base.upper(),{}).get(net,0.0)
-    return fee_base*sell_bid
+        self.content = root
 
-def compute(books, names_map, nets_map, notional=NOTIONAL, min_pct=MIN_PCT, min_abs=MIN_ABS):
-    opps=[]
-    for sym,exd in books.items():
-        if '/' not in sym: continue
-        base,quote=sym.split('/')
-        if QUOTES and quote not in QUOTES: continue
-        best_buy=None; best_sell=None
-        for ex,ba in exd.items():
-            bid,ask=ba["bid"],ba["ask"]
-            if ask>0 and (best_buy is None or ask<best_buy[1]): best_buy=(ex,ask)
-            if bid>0 and (best_sell is None or bid>best_sell[1]): best_sell=(ex,bid)
-        if not best_buy or not best_sell: continue
-        buy_ex,buy_ask=best_buy; sell_ex,sell_bid=best_sell
-        if buy_ex==sell_ex: continue
+class ArbAppUI(BoxLayout):
+    def __init__(self, **kwargs):
+        super().__init__(orientation="vertical", spacing=dp(6),
+                         padding=(dp(8), dp(8), dp(8), dp(4)), **kwargs)
 
-        c_buy=canonical_name(buy_ex,base,names_map); c_sel=canonical_name(sell_ex,base,names_map)
-        if c_buy and c_sel and c_buy!=c_sel: continue
+        # Title
+        self.add_widget(Label(text="Arbitrage Tracker — BASE transfer",
+                              size_hint_y=None, height=dp(28), bold=True, font_size=sp(18)))
 
-        net=pick_base_net(base,sell_ex,buy_ex,nets_map)
-        if not net: continue
+        # Controls 1
+        ctrl = GridLayout(cols=10, size_hint_y=None, height=dp(44), spacing=dp(6))
+        self.notional = TextInput(text="1000", multiline=False, input_filter="float", hint_text="Notional", font_size=sp(14))
+        self.minpct = TextInput(text="0.05", multiline=False, input_filter="float", hint_text="Min %", font_size=sp(14))
+        self.minabs = TextInput(text="0.5", multiline=False, input_filter="float", hint_text="Min Abs", font_size=sp(14))
+        self.minqv  = TextInput(text="0", multiline=False, input_filter="float", hint_text="Min 24h $Vol", font_size=sp(14))
+        self.quote  = TextInput(text=DEFAULT_QUOTE, multiline=False, hint_text="Quote", font_size=sp(14))
 
-        buy_fee=FEES_TRADE.get(buy_ex,0.001); sell_fee=FEES_TRADE.get(sell_ex,0.001)
-        tf_q=withdraw_fee_in_quote(base,net,sell_bid)
-        net_sell=sell_bid*(1-sell_fee); net_buy=buy_ask*(1+buy_fee)
-        net_unit=(net_sell-net_buy)-tf_q
-        if net_buy<=0: continue
-        pct=(net_unit/net_buy)*100.0
-        units=(notional/buy_ask) if buy_ask>0 else 0
-        abs_p=net_unit*units
-        if pct>=min_pct and abs_p>=min_abs:
-            opps.append((sym,f"{buy_ex}@{buy_ask:.8f}",f"{sell_ex}@{sell_bid:.8f}",
-                         f"{pct:.3f}%", f"{abs_p:.2f}", f"{tf_q:.6f}", net, c_buy or c_sel))
-    opps.sort(key=lambda x: float(x[3].replace('%','')), reverse=True)
-    return opps[:50]
+        ctrl.add_widget(Label(text="Notional", font_size=sp(12))); ctrl.add_widget(self.notional)
+        ctrl.add_widget(Label(text="Min %", font_size=sp(12)));   ctrl.add_widget(self.minpct)
+        ctrl.add_widget(Label(text="Min Abs", font_size=sp(12))); ctrl.add_widget(self.minabs)
+        ctrl.add_widget(Label(text="Min 24h $Vol", font_size=sp(12))); ctrl.add_widget(self.minqv)
+        ctrl.add_widget(Label(text="Quote", font_size=sp(12)));   ctrl.add_widget(self.quote)
+        self.add_widget(ctrl)
 
-# ---------- UI ----------
-class Table(GridLayout):
-    def __init__(self, **kw):
-        super().__init__(**kw)
-        self.cols=8
-        self.size_hint_y=None
-        self.bind(minimum_height=self.setter('height'))
-        self.add_header()
+        # Controls 2 (exchanges + auto refresh + stricts)
+        line2 = GridLayout(cols=8, size_hint_y=None, height=dp(44), spacing=dp(6))
+        self.exchanges = DEFAULT_EXCHANGES.copy()
+        self.ex_btn = Button(text=f"Exchanges ({', '.join([e.upper() for e in self.exchanges])})")
+        self.ex_btn.bind(on_release=self.open_exchanges)
 
-    def add_header(self):
-        headers=["Symbol","Buy(Ask)","Sell(Bid)","Net %","Abs Profit","Base Fee(Q)","Network","Canon"]
-        for h in headers:
-            self.add_widget(Label(text=f"[b]{h}[/b]", markup=True, size_hint_y=None, height=dp(36)))
+        self.auto_cb = CheckBox(active=True)
+        self.refresh_spinner = Spinner(text="15s", values=["5s","10s","15s","30s","60s"],
+                                       size_hint=(None,None), size=(dp(90), dp(36)))
+        self.refresh_spinner.bind(text=self._change_refresh)
 
-    def load(self, rows):
-        self.clear_widgets()
-        self.add_header()
-        if not rows:
-            self.add_widget(Label(text="No opportunities above thresholds right now.",
-                                  size_hint_y=None, height=dp(36)))
-            for _ in range(7): self.add_widget(Label(size_hint_y=None, height=dp(36)))
-            return
-        for r in rows:
-            for c in r:
-                self.add_widget(Label(text=str(c), size_hint_y=None, height=dp(32)))
+        self.strict_name_cb = CheckBox(active=False)
+        self.strict_net_cb  = CheckBox(active=False)
 
-class Root(BoxLayout):
-    def __init__(self, **kw):
-        super().__init__(orientation='vertical', **kw)
-        self.title = Label(text="[b]Arbitrage Tracker — BASE transfer[/b]", markup=True, size_hint_y=None, height=dp(40))
-        self.add_widget(self.title)
-        self.scroll=ScrollView()
-        self.table=Table()
-        self.scroll.add_widget(self.table)
-        self.add_widget(self.scroll)
-        self.status=Label(text="Initializing...", size_hint_y=None, height=dp(30))
+        self.safe_bases = TextInput(text="", hint_text="Safe bases e.g. BTC,ETH,SOL",
+                                    multiline=False, font_size=sp(13))
+
+        self.scan_btn = Button(text="Scan now", size_hint=(None,None), size=(dp(110), dp(36)))
+        self.scan_btn.bind(on_release=lambda *_: self.start_scan())
+
+        # Labels
+        line2.add_widget(self.ex_btn)
+        line2.add_widget(Label(text="Auto", font_size=sp(12)))
+        line2.add_widget(self.auto_cb)
+        line2.add_widget(self.refresh_spinner)
+        line2.add_widget(Label(text="Strict name", font_size=sp(12)))
+        line2.add_widget(self.strict_name_cb)
+        line2.add_widget(Label(text="Strict network", font_size=sp(12)))
+        line2.add_widget(self.strict_net_cb)
+
+        self.add_widget(line2)
+
+        # Safe bases + Scan
+        line3 = BoxLayout(size_hint_y=None, height=dp(44), spacing=dp(6))
+        line3.add_widget(self.safe_bases)
+        line3.add_widget(self.scan_btn)
+        self.add_widget(line3)
+
+        # Header + table (sync scroll)
+        self.header_scroll = ScrollView(size_hint_y=None, height=dp(34),
+                                        do_scroll_x=True, do_scroll_y=False, bar_width=0)
+        self.body_scroll = ScrollView(size_hint=(1,1), do_scroll_x=True, do_scroll_y=True, bar_width=dp(6))
+        self.body_scroll.bind(scroll_x=self._sync_header)
+
+        self.header_grid = GridLayout(rows=1, size_hint_x=None, height=dp(34), spacing=dp(2))
+        self.body_grid   = GridLayout(cols=len(COLS), size_hint_y=None, spacing=dp(2),
+                                      row_default_height=dp(30), row_force_default=True)
+
+        total_w = 0
+        for title, w in COLS:
+            lbl = Label(text=title, bold=True, font_size=sp(14), size_hint=(None,1), width=dp(w))
+            self.header_grid.add_widget(lbl); total_w += dp(w)
+        self.header_grid.width = total_w
+        self.body_grid.bind(minimum_height=self.body_grid.setter("height"))
+
+        self.header_scroll.add_widget(self.header_grid)
+        self.body_scroll.add_widget(self.body_grid)
+        self.add_widget(self.header_scroll)
+        self.add_widget(self.body_scroll)
+
+        # Status bar + توضیح strict
+        self.status = Label(text="Last update: — | exchanges: —",
+                            size_hint_y=None, height=dp(26), font_size=sp(12))
+        self.note   = Label(text="Note: Strict network requires private APIs; when ON, results are suppressed.",
+                            size_hint_y=None, height=dp(22), font_size=sp(11))
         self.add_widget(self.status)
+        self.add_widget(self.note)
+
+        # schedule
+        self._timer = Clock.schedule_interval(lambda dt: self._auto_scan(), 15)
+        Clock.schedule_once(lambda dt: self.start_scan(), 0.5)
+
+    def _sync_header(self, *_):
+        self.header_scroll.scroll_x = self.body_scroll.scroll_x
+
+    def _change_refresh(self, spinner, text):
+        val = int(text.replace("s", ""))
+        if self._timer: self._timer.cancel()
+        self._timer = Clock.schedule_interval(lambda dt: self._auto_scan(), val)
+
+    def _auto_scan(self):
+        if self.auto_cb.active:
+            self.start_scan()
+
+    def open_exchanges(self, *_):
+        def _apply(selected):
+            self.exchanges = selected or []
+            if not self.exchanges:
+                self.exchanges = DEFAULT_EXCHANGES.copy()
+            self.ex_btn.text = f"Exchanges ({', '.join([e.upper() for e in self.exchanges])})"
+        ExchangesPopup(self.exchanges, _apply).open()
+
+    def start_scan(self):
+        self.scan_btn.disabled = True
+        threading.Thread(target=self._scan_worker, daemon=True).start()
+
+    def _parse_floats(self):
+        try: notional = float(self.notional.text or 0)
+        except: notional = 1000.0
+        try: min_pct = float(self.minpct.text or 0)
+        except: min_pct = 0.05
+        try: min_abs = float(self.minabs.text or 0)
+        except: min_abs = 0.5
+        try: min_qv = float(self.minqv.text or 0)
+        except: min_qv = 0.0
+        return notional, min_pct, min_abs, min_qv
+
+    def _scan_worker(self):
+        notional, min_pct, min_abs, min_qv = self._parse_floats()
+        quote = (self.quote.text or DEFAULT_QUOTE).upper().strip()
+        safe_bases = [x.strip() for x in (self.safe_bases.text or "").split(",") if x.strip()]
+        strict_name = self.strict_name_cb.active
+        strict_net  = self.strict_net_cb.active
+
+        books, vols = aggregate_books(self.exchanges, quote=quote)
+        rows = find_opps(books, vols, notional=notional, min_pct=min_pct,
+                         min_abs=min_abs, min_qv_usd=min_qv, safe_bases=safe_bases,
+                         strict_name=strict_name, strict_network=strict_net)
+        self._update_table(rows, quote)
+
+    @mainthread
+    def _update_table(self, rows, quote):
+        self.body_grid.clear_widgets()
+        if not rows:
+            msg = Label(text="No opportunities above thresholds right now.",
+                        size_hint=(None,None), width=self.header_grid.width, height=dp(34),
+                        font_size=sp(14), halign="left", valign="middle")
+            msg.bind(size=lambda inst, val: setattr(inst, "text_size", val))
+            self.body_grid.add_widget(msg)
+            for _ in range(len(COLS)-1):
+                self.body_grid.add_widget(Label(text="", size_hint=(None,None),
+                                                width=dp(COLS[_][1]), height=dp(34)))
+        else:
+            for r in rows:
+                vals = [
+                    r["symbol"],
+                    r["buy"],
+                    r["sell"],
+                    f"{r['pct']:.3f}%",
+                    f"{r['abs']:.2f}",
+                    f"{r['volk']:.1f}",
+                    r["fee"],
+                    r["net"],
+                    r["canon"],
+                ]
+                for (title, w), val in zip(COLS, vals):
+                    lab = Label(text=str(val), size_hint=(None,None), width=dp(w), height=dp(30),
+                                font_size=sp(13), halign="left", valign="middle")
+                    lab.bind(size=lambda inst, val: setattr(inst, "text_size", val))
+                    self.body_grid.add_widget(lab)
+
+        ts = datetime.now().strftime("%H:%M:%S")
+        self.status.text = f"Last update: {ts}  |  exchanges: {', '.join(self.exchanges)}  |  quote: {quote}"
+        self.scan_btn.disabled = False
 
 class ArbApp(App):
     def build(self):
-        Window.clearcolor=(0.07,0.07,0.07,1)
-        self.root_widget=Root()
-        Clock.schedule_once(lambda dt: self.start_worker(), 0.5)
-        return self.root_widget
+        Window.clearcolor = (0, 0, 0, 1)
+        return ArbAppUI()
 
-    def start_worker(self):
-        def worker():
-            while True:
-                try:
-                    books=aggregate(EXCHANGES)
-                    names,nets=build_meta(EXCHANGES)
-                    rows=compute(books,names,nets)
-                    Clock.schedule_once(lambda dt: self.root_widget.table.load(rows))
-                    Clock.schedule_once(lambda dt: setattr(self.root_widget.status,'text', f"Last update: {time.strftime('%H:%M:%S')}  | exchanges: {', '.join(EXCHANGES)}"), 0)
-                except Exception as e:
-                    Clock.schedule_once(lambda dt: setattr(self.root_widget.status,'text', f"Error: {e}"), 0)
-                time.sleep(15)
-        Thread(target=worker, daemon=True).start()
-
-if __name__=="__main__":
+if __name__ == "__main__":
     ArbApp().run()
