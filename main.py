@@ -1,11 +1,11 @@
-# main.py
+# main.py — Clean UI (white), grid with borders & zebra, sticky header, center Scan, 3-dots menu (Filters/Settings)
 from kivy.lang import Builder
-from kivy.metrics import dp
+from kivy.metrics import dp, sp
+from kivy.factory import Factory
 from kivy.clock import Clock, mainthread
-from kivy.properties import ListProperty, StringProperty, NumericProperty, BooleanProperty
+from kivy.properties import ListProperty
 from kivy.uix.gridlayout import GridLayout
 from kivy.uix.scrollview import ScrollView
-from kivy.uix.widget import Widget
 from kivy.utils import get_color_from_hex
 
 from kivymd.app import MDApp
@@ -17,12 +17,8 @@ from kivymd.uix.bottomsheet import MDCustomBottomSheet
 from kivymd.uix.card import MDCard
 from kivymd.uix.selectioncontrol import MDCheckbox, MDSwitch
 from kivymd.uix.textfield import MDTextField
-from kivymd.uix.chip import MDChip
-from kivymd.uix.slider import MDSlider
-from kivymd.uix.dialog import MDDialog
 
-import threading, json, time
-import requests
+import threading, time, requests
 
 KV = '''
 <ThinDivider@Widget>:
@@ -36,8 +32,9 @@ KV = '''
             size: self.size
 
 <TableCell@MDLabel>:
-    padding: dp(8), dp(8)
+    padding: dp(10), dp(8)
     halign: 'left'
+    valign: 'middle'
     shorten: True
     shorten_from: 'right'
     theme_text_color: 'Custom'
@@ -57,7 +54,6 @@ KV = '''
 
 <HeaderCell@TableCell>:
     bold: True
-    font_style: 'Medium'
     canvas.before:
         Color:
             rgba: app.chead_bg
@@ -82,19 +78,18 @@ Root:
     md_bg_color: 1,1,1,1
 
     TopBar:
-        # چپ خالی
+        # left spacer
         MDBoxLayout:
             size_hint_x: .2
-        # دکمه Scan در وسط
+        # Scan at center
         MDBoxLayout:
             size_hint_x: .6
-            adaptive_height: True
             MDRaisedButton:
                 id: scan_btn
                 text: "Scan"
                 on_release: app.start_scan()
                 pos_hint: {'center_x': .5, 'center_y': .5}
-        # منوی سه‌نقطه در راست
+        # 3-dots menu at right
         MDBoxLayout:
             size_hint_x: .2
             MDIconButton:
@@ -102,7 +97,7 @@ Root:
                 pos_hint: {'center_x': .5, 'center_y': .5}
                 on_release: app.open_overflow(self)
 
-    # هدر چسبان + اسکرول افقی مشترک
+    # Sticky header (horizontal) with synced scroll
     ScrollView:
         id: header_sv
         bar_width: 0
@@ -151,7 +146,7 @@ Root:
                 width: app.col_w[8]
                 halign: 'right'
 
-    # بدنه جدول با اسکرول افقی/عمودی
+    # Body (both directions)
     ScrollView:
         id: body_sv
         do_scroll_x: True
@@ -166,7 +161,7 @@ Root:
 
     ThinDivider:
 
-    # نوار وضعیت پایین
+    # Status bar
     MDBoxLayout:
         size_hint_y: None
         height: dp(28)
@@ -184,16 +179,16 @@ Root:
 class Root(MDBoxLayout):
     pass
 
-# ---------------------- Data fetch (public endpoints) ----------------------
+# ---------------------- HTTP fetchers (public endpoints only) ----------------------
+UA = {"User-Agent": "Mozilla/5.0 (KivyMD/ArbTracker)"}
 
 def http_get(url, headers=None, timeout=15):
     try:
-        r = requests.get(url, headers=headers or {}, timeout=timeout)
-        if r.status_code == 200:
-            return r.json()
+        r = requests.get(url, headers=headers or UA, timeout=timeout)
+        r.raise_for_status()
+        return r.json()
     except Exception:
         return None
-    return None
 
 def fetch_okx(quote):
     url = 'https://www.okx.com/api/v5/market/tickers?instType=SPOT'
@@ -201,30 +196,28 @@ def fetch_okx(quote):
     out = {}
     if js and js.get('data'):
         for it in js['data']:
-            inst = it.get('instId','')  # e.g. BTC-USDT
-            if not inst.endswith(f'-{quote}'):
-                continue
+            inst = it.get('instId','')   # e.g. BTC-USDT
+            if not inst.endswith(f'-{quote}'): continue
             base = inst.split('-')[0]
             sym = f'{base}/{quote}'
             try:
                 ask = float(it.get('askPx') or 0)
                 bid = float(it.get('bidPx') or 0)
-                qv  = float(it.get('volCcy24h') or 0.0)  # quote vol 24h
+                qv  = float(it.get('volCcy24h') or 0.0)  # quote volume
             except Exception:
                 ask=bid=qv=0.0
-            out[sym] = {'ask':ask,'bid':bid,'qvol':qv}
+            if ask>0 and bid>0:
+                out[sym] = {'ask':ask,'bid':bid,'qvol':qv}
     return out
 
 def fetch_kucoin(quote):
-    # quote example: USDT -> symbols are like BTC-USDT
     url = 'https://api.kucoin.com/api/v1/market/allTickers'
     js = http_get(url)
     out = {}
     if js and js.get('data') and js['data'].get('ticker'):
         for it in js['data']['ticker']:
-            sym = it.get('symbol','')  # e.g. BTC-USDT
-            if not sym.endswith(f'-{quote}'):
-                continue
+            sym = it.get('symbol','')   # e.g. BTC-USDT
+            if not sym.endswith(f'-{quote}'): continue
             base = sym.split('-')[0]
             ksym = f'{base}/{quote}'
             try:
@@ -233,18 +226,18 @@ def fetch_kucoin(quote):
                 qv  = float(it.get('volValue') or 0.0)
             except Exception:
                 ask=bid=qv=0.0
-            out[ksym] = {'ask':ask,'bid':bid,'qvol':qv}
+            if ask>0 and bid>0:
+                out[ksym] = {'ask':ask,'bid':bid,'qvol':qv}
     return out
 
 def fetch_gate(quote):
     url = 'https://api.gateio.ws/api/v4/spot/tickers'
-    js = http_get(url)
-    out={}
+    js = http_get(url, headers={"Accept":"application/json"})
+    out = {}
     if isinstance(js, list):
         for it in js:
             pair = it.get('currency_pair','')  # BTC_USDT
-            if not pair.endswith(f'_{quote}'):
-                continue
+            if not pair.endswith(f'_{quote}'): continue
             base = pair.split('_')[0]
             gsym = f'{base}/{quote}'
             try:
@@ -253,36 +246,33 @@ def fetch_gate(quote):
                 qv  = float(it.get('quote_volume') or 0.0)
             except Exception:
                 ask=bid=qv=0.0
-            out[gsym] = {'ask':ask,'bid':bid,'qvol':qv}
+            if ask>0 and bid>0:
+                out[gsym] = {'ask':ask,'bid':bid,'qvol':qv}
     return out
 
-EX_FETCH = {
-    'okx': fetch_okx,
-    'kucoin': fetch_kucoin,
-    'gate': fetch_gate,
-}
+EX_FETCH = {'okx': fetch_okx, 'kucoin': fetch_kucoin, 'gate': fetch_gate}
 
 # ---------------------- App ----------------------
-
 class ArbApp(MDApp):
     # colors
-    ctext  = get_color_from_hex("#1F2937")
-    cmuted = get_color_from_hex("#6B7280")
-    cline  = get_color_from_hex("#E5E7EB")
-    chead_bg = get_color_from_hex("#F3F4F6")
+    ctext    = get_color_from_hex("#1F2937")  # text dark
+    cmuted   = get_color_from_hex("#6B7280")  # muted
+    cline    = get_color_from_hex("#E5E7EB")  # grid lines
+    chead_bg = get_color_from_hex("#F3F4F6")  # header bg
 
     # layout metrics
     line_px = 1.0
-    font_px = 14
+    font_px = sp(14)
 
-    col_w = ListProperty([dp(140), dp(160), dp(160), dp(90), dp(120), dp(120), dp(120), dp(110), dp(100)])
+    # column widths
+    col_w = ListProperty([dp(150), dp(180), dp(180), dp(100), dp(130), dp(130), dp(120), dp(100), dp(110)])
 
     @property
     def table_width(self):
         return sum(self.col_w)
 
     def build(self):
-        self.title = ""  # بدون عنوان
+        self.title = ""      # no app bar title
         self.theme_cls.theme_style = "Light"
         self.root = Builder.load_string(KV)
 
@@ -297,19 +287,20 @@ class ArbApp(MDApp):
             'exchanges': ['okx','kucoin','gate'],
         }
         self.settings = {
-            'auto_refresh_s': 0,  # 0=Off
-            'line_weight': 'thin',  # thin/med/bold
-            'font_size': 'M',      # S/M/L
+            'auto_refresh_s': 0,      # 0 = Off
+            'line_weight': 'thin',    # thin/med/bold
+            'font_size': 'M',         # S/M/L
             'theme': 'Light',
         }
         self._auto_event = None
 
         self.build_table([])  # empty state
         self.set_status("Ready.")
+        # initial scan shortly after UI ready
+        Clock.schedule_once(lambda *_: self.start_scan(), 0.2)
         return self.root
 
     # --------------- UI helpers ---------------
-
     def set_status(self, txt):
         self.root.ids.status_lbl.text = txt
 
@@ -319,11 +310,13 @@ class ArbApp(MDApp):
     def build_table(self, rows):
         holder = self.root.ids.table_holder
         holder.clear_widgets()
+
         if not rows:
-            card = MDCard(md_bg_color=(1,1,1,1), padding=(dp(12), dp(18)), radius=dp(8))
-            card.add_widget(MDLabel(text="No opportunities above thresholds right now.",
-                                    theme_text_color='Custom', text_color=self.cmuted,
-                                    font_size=sp(14)))
+            card = MDCard(md_bg_color=(1,1,1,1), padding=(dp(12), dp(18)), radius=[dp(8)]*4)
+            card.add_widget(MDLabel(
+                text="No opportunities above thresholds right now.",
+                theme_text_color='Custom', text_color=self.cmuted,
+                font_size=sp(14)))
             holder.add_widget(card)
             return
 
@@ -331,25 +324,25 @@ class ArbApp(MDApp):
         grid.bind(minimum_height=grid.setter('height'))
         grid.width = self.table_width
 
-        zebra1 = get_color_from_hex("#FFFFFF")
+        zebra1 = (1,1,1,1)
         zebra2 = get_color_from_hex("#F8FAFC")
 
         for i, r in enumerate(rows):
             bg = zebra1 if i % 2 == 0 else zebra2
-            # r: [symbol, buy_str, sell_str, net_pct, abs_profit, fee, netwk, canon, volk]
+            # r = [symbol, buy, sell, net_pct, abs_profit, fee, network, canon, volk]
             cells = [
-                ('left', self.col_w[0], str(r[0])),
-                ('left', self.col_w[1], str(r[1])),
-                ('left', self.col_w[2], str(r[2])),
+                ('left',  self.col_w[0], str(r[0])),
+                ('left',  self.col_w[1], str(r[1])),
+                ('left',  self.col_w[2], str(r[2])),
                 ('right', self.col_w[3], f"{r[3]:.3f}"),
                 ('right', self.col_w[4], f"{r[4]:.2f}"),
                 ('right', self.col_w[5], f"{r[5]:.2f}"),
-                ('left', self.col_w[6], str(r[6])),
-                ('left', self.col_w[7], str(r[7])),
+                ('left',  self.col_w[6], str(r[6])),
+                ('left',  self.col_w[7], str(r[7])),
                 ('right', self.col_w[8], f"{r[8]:.0f}"),
             ]
             for hal, w, txt in cells:
-                lbl = Builder.template('TableCell')
+                lbl = Factory.TableCell()
                 lbl.halign = hal
                 lbl.text = txt
                 lbl.size_hint_x = None
@@ -359,47 +352,54 @@ class ArbApp(MDApp):
 
         holder.add_widget(grid)
 
-    # --------------- Overflow menu ---------------
-
+    # --------------- Overflow (3-dots) ---------------
     def open_overflow(self, caller):
         items = [
-            {"viewclass": "MDLabel", "text": "Filters", "on_release": lambda: self._open_filters(caller)},
-            {"viewclass": "MDLabel", "text": "Settings", "on_release": lambda: self._open_settings(caller)},
+            {"viewclass": "OneLineListItem", "text": "Filters",
+             "on_release": lambda: (self._open_filters(caller), menu.dismiss())},
+            {"viewclass": "OneLineListItem", "text": "Settings",
+             "on_release": lambda: (self._open_settings(caller), menu.dismiss())},
         ]
-        menu = MDDropdownMenu(caller=caller, items=items, width_mult=2)
+        menu = MDDropdownMenu(caller=caller, items=items, width_mult=3)
         menu.open()
 
-    # ---- Filters bottom sheet
+    # ---- Filters sheet
     def _open_filters(self, _caller):
         content = MDBoxLayout(orientation='vertical', padding=dp(12), spacing=dp(12))
+
         tf_notional = MDTextField(text=str(self.filters['notional']), hint_text="Notional", input_filter="float")
-        tf_minpct   = MDTextField(text=str(self.filters['min_pct']), hint_text="Min %", input_filter="float")
-        tf_minabs   = MDTextField(text=str(self.filters['min_abs']), hint_text="Min Abs", input_filter="float")
-        tf_minvol   = MDTextField(text=str(self.filters['min_volk']), hint_text="Min 24h Vol (k$)", input_filter="float")
+        tf_minpct   = MDTextField(text=str(self.filters['min_pct']),   hint_text="Min %",  input_filter="float")
+        tf_minabs   = MDTextField(text=str(self.filters['min_abs']),   hint_text="Min Abs",input_filter="float")
+        tf_minvol   = MDTextField(text=str(self.filters['min_volk']),  hint_text="Min 24h Vol (k$)", input_filter="float")
 
-        quote_menu = MDDropdownMenu(
-            caller=None, items=[{"text":"USDT"},{"text":"USDC"}],
-            width_mult=2
-        )
+        # Quote picker
         quote_lbl = MDLabel(text=f"Quote: {self.filters['quote']}", theme_text_color='Custom', text_color=self.ctext)
-
+        def open_quote(btn):
+            qitems = [
+                {"viewclass":"OneLineListItem","text":"USDT","on_release": lambda *_:(set_quote('USDT'), qmenu.dismiss())},
+                {"viewclass":"OneLineListItem","text":"USDC","on_release": lambda *_:(set_quote('USDC'), qmenu.dismiss())},
+            ]
+            nonlocal qmenu
+            qmenu = MDDropdownMenu(caller=btn, items=qitems, width_mult=2)
+            qmenu.open()
         def set_quote(q):
             self.filters['quote'] = q
             quote_lbl.text = f"Quote: {q}"
+        qmenu = None
+        quote_btn = MDRaisedButton(text="Change Quote", on_release=open_quote)
 
-        quote_menu.items = [{"text":"USDT","on_release":lambda q="USDT": (set_quote(q), quote_menu.dismiss())},
-                            {"text":"USDC","on_release":lambda q="USDC": (set_quote(q), quote_menu.dismiss())}]
-        quote_btn = MDRaisedButton(text="Change Quote", on_release=lambda *_: quote_menu.open())
-
-        # exchanges chips
-        ex_row = MDBoxLayout(adaptive_height=True, spacing=dp(6))
+        # Exchanges
+        ex_row = MDBoxLayout(adaptive_height=True, spacing=dp(10))
         ex_all = ['okx','kucoin','gate']
         ex_checks = {}
         for ex in ex_all:
+            row = MDBoxLayout(adaptive_height=True, spacing=dp(6))
             chk = MDCheckbox(active=ex in self.filters['exchanges'])
             ex_checks[ex] = chk
-            ex_row.add_widget(chk)
-            ex_row.add_widget(MDLabel(text=ex.upper(), theme_text_color='Custom', text_color=self.ctext))
+            row.add_widget(chk)
+            row.add_widget(MDLabel(text=ex.upper(), theme_text_color='Custom', text_color=self.ctext))
+            ex_row.add_widget(row)
+
         strict_sw = MDSwitch(active=self.filters['strict_name'])
         strict_row = MDBoxLayout(adaptive_height=True, spacing=dp(8))
         strict_row.add_widget(MDLabel(text="Strict name", theme_text_color='Custom', text_color=self.ctext))
@@ -407,20 +407,17 @@ class ArbApp(MDApp):
 
         btns = MDBoxLayout(spacing=dp(8), adaptive_height=True)
         btns.add_widget(MDFlatButton(text="Reset", on_release=lambda *_: self._filters_reset(tf_notional, tf_minpct, tf_minabs, tf_minvol, ex_checks, strict_sw)))
-        btns.add_widget(MDRaisedButton(text="Apply", on_release=lambda *_: self._filters_apply(tf_notional, tf_minpct, tf_minabs, tf_minvol, ex_checks, strict_sw, sheet)))
-
-        content.add_widget(tf_notional)
-        content.add_widget(tf_minpct)
-        content.add_widget(tf_minabs)
-        content.add_widget(tf_minvol)
-        content.add_widget(quote_lbl)
-        content.add_widget(quote_btn)
+        # Apply button needs access to sheet; create sheet first then bind:
+        content.add_widget(tf_notional); content.add_widget(tf_minpct)
+        content.add_widget(tf_minabs);   content.add_widget(tf_minvol)
+        content.add_widget(quote_lbl);   content.add_widget(quote_btn)
         content.add_widget(MDLabel(text="Exchanges:", theme_text_color='Custom', text_color=self.ctext))
         content.add_widget(ex_row)
         content.add_widget(strict_row)
-        content.add_widget(btns)
-
+        # Placeholder for buttons; add later after sheet creation
         sheet = MDCustomBottomSheet(screen=content)
+        btns.add_widget(MDRaisedButton(text="Apply", on_release=lambda *_: self._filters_apply(tf_notional, tf_minpct, tf_minabs, tf_minvol, ex_checks, strict_sw, sheet)))
+        content.add_widget(btns)
         sheet.open()
 
     def _filters_reset(self, t1, t2, t3, t4, ex_checks, strict_sw):
@@ -442,7 +439,7 @@ class ArbApp(MDApp):
         sheet.dismiss()
         self.set_status("Filters applied.")
 
-    # ---- Settings bottom sheet
+    # ---- Settings sheet
     def _open_settings(self, _caller):
         content = MDBoxLayout(orientation='vertical', padding=dp(12), spacing=dp(12))
 
@@ -467,7 +464,7 @@ class ArbApp(MDApp):
         # Font size
         content.add_widget(MDLabel(text="Font size:", theme_text_color='Custom', text_color=self.ctext))
         row3 = MDBoxLayout(spacing=dp(8), adaptive_height=True)
-        for nm,px in [('S',12),('M',14),('L',16)]:
+        for nm,px in [('S',sp(12)),('M',sp(14)),('L',sp(16))]:
             b = MDRaisedButton(text=nm, md_bg_color=(0.9,0.9,0.9,1) if self.settings['font_size']==nm else (1,1,1,1))
             b.bind(on_release=lambda _b, nm=nm, px=px: self._set_font(nm,px))
             row3.add_widget(b)
@@ -482,14 +479,12 @@ class ArbApp(MDApp):
             row4.add_widget(b)
         content.add_widget(row4)
 
-        content.add_widget(MDLabel(text="Note: Strict network requires private APIs; disabled for now.", theme_text_color='Custom', text_color=self.cmuted, font_size=sp(12)))
-
         sheet = MDCustomBottomSheet(screen=content)
         sheet.open()
 
     def _set_auto_refresh(self, s):
         self.settings['auto_refresh_s'] = s
-        if self._auto_event:
+        if hasattr(self, "_auto_event") and self._auto_event:
             self._auto_event.cancel()
             self._auto_event = None
         if s > 0:
@@ -499,7 +494,6 @@ class ArbApp(MDApp):
     def _set_line(self, name, px):
         self.settings['line_weight'] = name
         self.line_px = px
-        # رفرش ظاهر جدول
         self.build_table(getattr(self, "_last_rows", []))
 
     def _set_font(self, nm, px):
@@ -512,7 +506,6 @@ class ArbApp(MDApp):
         self.theme_cls.theme_style = nm
 
     # --------------- Scan ---------------
-
     def start_scan(self):
         btn = self.root.ids.scan_btn
         btn.disabled = True
@@ -536,7 +529,7 @@ class ArbApp(MDApp):
         exs = ",".join(self.filters['exchanges'])
         self.set_status(f"Last update: {now}  |  exchanges: {exs}  |  quote: {self.filters['quote']}  |  {len(rows)} rows  | {dt:.1f}s")
 
-    # core logic: pick min ask & max bid across selected exchanges for same symbol
+    # ---------- core opportunity computation ----------
     def _compute_opportunities(self):
         quote = self.filters['quote']
         selected = self.filters['exchanges'][:]
@@ -548,7 +541,7 @@ class ArbApp(MDApp):
             data = fn(quote)
             books[ex] = data
 
-        # gather all symbols present in at least 2 exchanges
+        # gather symbols present in ≥2 exchanges
         symbols = {}
         for ex, mp in books.items():
             for sym in mp.keys():
@@ -580,33 +573,28 @@ class ArbApp(MDApp):
                     buy_ex, buy_ask = ex, ask
                 if bid and (sell_bid is None or bid > sell_bid):
                     sell_ex, sell_bid = ex, bid
-            if buy_ex == sell_ex:
-                continue
-            if not buy_ask or not sell_bid:
+            if buy_ex == sell_ex or not buy_ask or not sell_bid:
                 continue
 
             net_pct = (sell_bid / buy_ask - 1.0) * 100.0
-            abs_profit = (sell_bid - buy_ask) * notional / buy_ask  # approximate in quote
+            abs_profit = (sell_bid - buy_ask) * notional / buy_ask
             volk = total_qvol / 1000.0
 
             if net_pct >= min_pct and abs_profit >= min_abs and volk >= min_volk:
-                row = [
+                out_rows.append([
                     sym,
                     f"{buy_ex}@{buy_ask:.8f}",
                     f"{sell_ex}@{sell_bid:.8f}",
                     net_pct,
                     abs_profit,
-                    0.0,           # transfer fee placeholder
-                    "-",           # network placeholder
-                    "-",           # canon placeholder
+                    0.0,     # transfer fee placeholder
+                    "-",     # network placeholder
+                    "-",     # canon placeholder
                     volk,
-                ]
-                out_rows.append(row)
+                ])
 
-        # sort by Net % desc
         out_rows.sort(key=lambda r: r[3], reverse=True)
         return out_rows[:200]
-    
 
 if __name__ == "__main__":
     ArbApp().run()
