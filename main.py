@@ -17,6 +17,7 @@ from kivymd.uix.bottomsheet import MDCustomBottomSheet
 from kivymd.uix.card import MDCard
 from kivymd.uix.selectioncontrol import MDCheckbox, MDSwitch
 from kivymd.uix.textfield import MDTextField
+from kivymd.uix.list import OneLineListItem  # ensure viewclass is registered
 
 import threading, time, requests
 
@@ -296,7 +297,6 @@ class ArbApp(MDApp):
 
         self.build_table([])  # empty state
         self.set_status("Ready.")
-        # initial scan shortly after UI ready
         Clock.schedule_once(lambda *_: self.start_scan(), 0.2)
         return self.root
 
@@ -312,7 +312,7 @@ class ArbApp(MDApp):
         holder.clear_widgets()
 
         if not rows:
-            card = MDCard(md_bg_color=(1,1,1,1), padding=(dp(12), dp(18)), radius=[dp(8)]*4)
+            card = MDCard(md_bg_color=(1,1,1,1), padding=(dp(12), dp(18)), radius=[dp(8), dp(8), dp(8), dp(8)])
             card.add_widget(MDLabel(
                 text="No opportunities above thresholds right now.",
                 theme_text_color='Custom', text_color=self.cmuted,
@@ -354,11 +354,19 @@ class ArbApp(MDApp):
 
     # --------------- Overflow (3-dots) ---------------
     def open_overflow(self, caller):
+        menu = None
+        def do_filters(*_):
+            nonlocal menu
+            if menu: menu.dismiss()
+            self._open_filters(caller)
+        def do_settings(*_):
+            nonlocal menu
+            if menu: menu.dismiss()
+            self._open_settings(caller)
+
         items = [
-            {"viewclass": "OneLineListItem", "text": "Filters",
-             "on_release": lambda: (self._open_filters(caller), menu.dismiss())},
-            {"viewclass": "OneLineListItem", "text": "Settings",
-             "on_release": lambda: (self._open_settings(caller), menu.dismiss())},
+            {"viewclass": "OneLineListItem", "text": "Filters",  "on_release": do_filters},
+            {"viewclass": "OneLineListItem", "text": "Settings", "on_release": do_settings},
         ]
         menu = MDDropdownMenu(caller=caller, items=items, width_mult=3)
         menu.open()
@@ -374,18 +382,18 @@ class ArbApp(MDApp):
 
         # Quote picker
         quote_lbl = MDLabel(text=f"Quote: {self.filters['quote']}", theme_text_color='Custom', text_color=self.ctext)
+        qmenu = None
+        def set_quote(q):
+            self.filters['quote'] = q
+            quote_lbl.text = f"Quote: {q}"
         def open_quote(btn):
+            nonlocal qmenu
             qitems = [
                 {"viewclass":"OneLineListItem","text":"USDT","on_release": lambda *_:(set_quote('USDT'), qmenu.dismiss())},
                 {"viewclass":"OneLineListItem","text":"USDC","on_release": lambda *_:(set_quote('USDC'), qmenu.dismiss())},
             ]
-            nonlocal qmenu
             qmenu = MDDropdownMenu(caller=btn, items=qitems, width_mult=2)
             qmenu.open()
-        def set_quote(q):
-            self.filters['quote'] = q
-            quote_lbl.text = f"Quote: {q}"
-        qmenu = None
         quote_btn = MDRaisedButton(text="Change Quote", on_release=open_quote)
 
         # Exchanges
@@ -405,17 +413,17 @@ class ArbApp(MDApp):
         strict_row.add_widget(MDLabel(text="Strict name", theme_text_color='Custom', text_color=self.ctext))
         strict_row.add_widget(strict_sw)
 
+        # Buttons
         btns = MDBoxLayout(spacing=dp(8), adaptive_height=True)
-        btns.add_widget(MDFlatButton(text="Reset", on_release=lambda *_: self._filters_reset(tf_notional, tf_minpct, tf_minabs, tf_minvol, ex_checks, strict_sw)))
-        # Apply button needs access to sheet; create sheet first then bind:
+        # Sheet must be created before binding Apply to close it:
         content.add_widget(tf_notional); content.add_widget(tf_minpct)
         content.add_widget(tf_minabs);   content.add_widget(tf_minvol)
         content.add_widget(quote_lbl);   content.add_widget(quote_btn)
         content.add_widget(MDLabel(text="Exchanges:", theme_text_color='Custom', text_color=self.ctext))
         content.add_widget(ex_row)
         content.add_widget(strict_row)
-        # Placeholder for buttons; add later after sheet creation
         sheet = MDCustomBottomSheet(screen=content)
+        btns.add_widget(MDFlatButton(text="Reset", on_release=lambda *_: self._filters_reset(tf_notional, tf_minpct, tf_minabs, tf_minvol, ex_checks, strict_sw)))
         btns.add_widget(MDRaisedButton(text="Apply", on_release=lambda *_: self._filters_apply(tf_notional, tf_minpct, tf_minabs, tf_minvol, ex_checks, strict_sw, sheet)))
         content.add_widget(btns)
         sheet.open()
@@ -509,7 +517,6 @@ class ArbApp(MDApp):
     def start_scan(self):
         btn = self.root.ids.scan_btn
         btn.disabled = True
-        old_text = btn.text
         btn.text = "Scanning…"
         threading.Thread(target=self._scan_thread, daemon=True).start()
 
@@ -571,7 +578,7 @@ class ArbApp(MDApp):
             for ex, ask, bid in ex_data:
                 if ask and (buy_ask is None or ask < buy_ask):
                     buy_ex, buy_ask = ex, ask
-                if bid and (sell_bid is None or bid > sell_bid):
+                if bid and (sell_bid is None or sell_bid < bid):
                     sell_ex, sell_bid = ex, bid
             if buy_ex == sell_ex or not buy_ask or not sell_bid:
                 continue
