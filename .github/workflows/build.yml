@@ -51,7 +51,7 @@ jobs:
             "build-tools;34.0.0" \
             "ndk;25.2.9519653"
 
-          # سازگارسازی مسیر قدیمی tools/bin برای بیلدوزر/پ4ا
+          # مسیر سازگار با ابزارهای قدیمی
           mkdir -p "$SDK/tools"
           ln -sfn "$SDK/cmdline-tools/latest/bin" "$SDK/tools/bin"
 
@@ -64,8 +64,6 @@ jobs:
           mkdir -p "$HOME/.buildozer/android/platform"
           ln -sfn "$SDK" "$HOME/.buildozer/android/platform/android-sdk"
           ln -sfn "$NDK" "$HOME/.buildozer/android/platform/android-ndk-r25b"
-          echo "SDK at: $SDK"
-          echo "NDK at: $NDK"
           ls -la "$HOME/.buildozer/android/platform"
 
       - name: Build APK (debug) with full logs
@@ -77,8 +75,8 @@ jobs:
           export ANDROIDSDK="${ANDROID_SDK_ROOT}"
           export ANDROIDNDK="${ANDROID_SDK_ROOT}/ndk/25.2.9519653"
           export PATH="$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/build-tools/36.0.0:$ANDROID_SDK_ROOT/build-tools/34.0.0:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/tools/bin:$PATH"
-          # اجرای بیلد با لاگ کامل
-          buildozer --log-level 2 -v android debug || (echo "Buildozer returned non-zero"; exit 1)
+          # فقط -v؛ سطح لاگ از buildozer.spec خوانده می‌شود
+          buildozer -v android debug
 
       - name: Upload APK
         if: success()
@@ -90,8 +88,7 @@ jobs:
       - name: Dump build logs (always)
         if: always()
         run: |
-          echo "=== Listing .buildozer logs ==="
+          echo "=== .buildozer logs ==="
           find .buildozer -type f \( -name "*.log" -o -name "build*.txt" \) -maxdepth 5 -print 2>/dev/null || true
-          echo "=== Tail logs (if any) ==="
           for f in $(find .buildozer -type f -name "*.log" -maxdepth 5 2>/dev/null); do
             echo "--- $f ---"; tail -n 200 "$f" || true; done
