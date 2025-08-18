@@ -16,12 +16,19 @@ jobs:
         with:
           python-version: '3.10'
 
+      # >>> مهم: جاوا 17
+      - name: Set up Java 17 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
       - name: Install system deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y zip unzip openjdk-17-jdk python3-pip libffi-dev libssl-dev build-essential
+          sudo apt-get install -y zip unzip python3-pip libffi-dev libssl-dev build-essential
 
-      # نصب Android SDK + پذیرش لایسنس‌ها + پین‌کردن Build-Tools 34
       - name: Install Android cmdline tools & SDK
         env:
           ANDROID_HOME: ${{ github.workspace }}/android-sdk
