@@ -16,20 +16,19 @@ jobs:
         with:
           python-version: '3.10'
 
-      # جاوا 17 برای sdkmanager
+      # جاوا 17 - بدون cache: gradle
       - name: Set up Java 17 (Temurin)
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
-          cache: 'gradle'
 
       - name: Install system deps
         run: |
           sudo apt-get update
           sudo apt-get install -y zip unzip python3-pip libffi-dev libssl-dev build-essential
 
-      # نصب commandline-tools + SDK/NDK در خود workspace (عدم نیاز به دسترسی سیستمی)
+      # نصب cmdline-tools + SDK/NDK در خود workspace
       - name: Install Android cmdline tools & SDK
         env:
           ANDROID_HOME: ${{ github.workspace }}/android-sdk
@@ -61,8 +60,7 @@ jobs:
           ANDROIDSDK: ${{ github.workspace }}/android-sdk
           ANDROIDNDK: ${{ github.workspace }}/android-sdk/ndk/25.2.9519653
           PATH: ${{ github.workspace }}/android-sdk/platform-tools:${{ github.workspace }}/android-sdk/build-tools/34.0.0:${{ github.workspace }}/android-sdk/cmdline-tools/latest/bin:${{ env.PATH }}
-        run: |
-          buildozer -v android debug
+        run: buildozer -v android debug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
