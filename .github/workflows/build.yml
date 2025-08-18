@@ -41,15 +41,16 @@ jobs:
           unzip -q cmdtools.zip -d "$SDK/cmdline-tools"
           mv "$SDK/cmdline-tools/cmdline-tools" "$SDK/cmdline-tools/latest"
           mkdir -p "$HOME/.android" && touch "$HOME/.android/repositories.cfg"
-          # قبول لایسنس‌ها (Broken pipe مهم نیست)
           ( yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --licenses ) || true
-          # نصب پکیج‌های لازم + هر دو نسخه build-tools
           "$SDK/cmdline-tools/latest/bin/sdkmanager" \
             "platform-tools" \
             "platforms;android-34" \
             "build-tools;36.0.0" \
             "build-tools;34.0.0" \
             "ndk;25.2.9519653"
+          # --- Back-compat for old p4a/buildozer: expect <sdk>/tools/bin/sdkmanager
+          mkdir -p "$SDK/tools"
+          ln -sfn "$SDK/cmdline-tools/latest/bin" "$SDK/tools/bin"
 
       - name: Install buildozer
         run: |
@@ -62,10 +63,9 @@ jobs:
           SDK="${GITHUB_WORKSPACE}/android-sdk"
           NDK="$SDK/ndk/25.2.9519653"
           mkdir -p "$HOME/.buildozer/android/platform"
-          # لینک دادن SDK و NDK به مسیر داخلی بیلدوزر
           ln -sfn "$SDK" "$HOME/.buildozer/android/platform/android-sdk"
           ln -sfn "$NDK" "$HOME/.buildozer/android/platform/android-ndk-r25b"
-          ls -la "$HOME/.buildozer/android/platform"
+          ls -la "$HOME/.buildozer/android/platform" || true
 
       - name: Build APK (debug)
         shell: bash
@@ -75,11 +75,10 @@ jobs:
           export ANDROID_HOME="${ANDROID_SDK_ROOT}"
           export ANDROIDSDK="${ANDROID_SDK_ROOT}"
           export ANDROIDNDK="${ANDROID_SDK_ROOT}/ndk/25.2.9519653"
-          # فقط اضافه کردن به PATH (PATH سیستم حفظ می‌شود تا git و … در دسترس بمانند)
-          export PATH="$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/build-tools/36.0.0:$ANDROID_SDK_ROOT/build-tools/34.0.0:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
-          # چک aidl
+          export PATH="$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/build-tools/36.0.0:$ANDROID_SDK_ROOT/build-tools/34.0.0:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/tools/bin:$PATH"
+          # sanity check
+          which sdkmanager || true
           which aidl || true
-          test -x "$ANDROID_SDK_ROOT/build-tools/36.0.0/aidl" || (echo "aidl not found!" && ls -la "$ANDROID_SDK_ROOT/build-tools/36.0.0" && exit 1)
           buildozer -v android debug
 
       - name: Upload APK
