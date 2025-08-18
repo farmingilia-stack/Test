@@ -51,9 +51,8 @@ jobs:
             "build-tools;34.0.0" \
             "ndk;25.2.9519653"
 
-          # مسیر سازگار با ابزارهای قدیمی
-          mkdir -p "$SDK/tools"
-          ln -sfn "$SDK/cmdline-tools/latest/bin" "$SDK/tools/bin"
+          # ✅ لینک درست: کل فولدر tools به latest
+          ln -sfn "$SDK/cmdline-tools/latest" "$SDK/tools"
 
       - name: Prepare SDK/NDK links for Buildozer
         shell: bash
@@ -75,7 +74,6 @@ jobs:
           export ANDROIDSDK="${ANDROID_SDK_ROOT}"
           export ANDROIDNDK="${ANDROID_SDK_ROOT}/ndk/25.2.9519653"
           export PATH="$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/build-tools/36.0.0:$ANDROID_SDK_ROOT/build-tools/34.0.0:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/tools/bin:$PATH"
-          # فقط -v؛ سطح لاگ از buildozer.spec خوانده می‌شود
           buildozer -v android debug
 
       - name: Upload APK
