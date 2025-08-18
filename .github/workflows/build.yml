@@ -1,67 +1,34 @@
 name: Build Android APK
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: {}
+  push:
+    branches: [ main ]
 
 jobs:
   build:
     runs-on: ubuntu-22.04
-    env:
-      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
-      ANDROID_HOME: /usr/local/lib/android/sdk
-      JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
-      # اجبار نسخه‌های API (بیلدوزر اگر قاطی کند از این استفاده می‌کند)
-      ANDROIDAPI: "33"
-      ANDROIDMINAPI: "24"
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: System deps
         run: |
-          sudo apt-get update
-          sudo apt-get install -y python3-pip openjdk-17-jdk unzip curl git build-essential \
-                                  libffi-dev libssl-dev zlib1g-dev libbz2-dev libsqlite3-dev libstdc++6
+          sudo apt update
+          sudo apt install -y python3-pip python3-venv openjdk-17-jdk unzip git libffi-dev libssl-dev build-essential
           python3 -m pip install --upgrade pip
-          # Cython<3 برای سازگاری پکیج‌های P4A
-          python3 -m pip install "cython<3" buildozer
 
-      - name: Install Android cmdline-tools + SDK/NDK
+      - name: Install buildozer
         run: |
-          set -e
-          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools/latest"
-          curl -sSL -o cmdtools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-          unzip -q cmdtools.zip -d "$ANDROID_SDK_ROOT/cmdline-tools"
-          mv "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools" "$ANDROID_SDK_ROOT/cmdline-tools/latest"
-          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses || true
-          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
-            "platform-tools" "platforms;android-33" "build-tools;33.0.2" "ndk;25.2.9519653"
+          python3 -m pip install cython buildozer==1.5.0
 
-      - name: Force Buildozer to use our SDK/NDK (symlinks + clean)
+      - name: Build (debug)
         run: |
-          # هرچی قبلاً بیلدوزر ساخته پاک می‌کنیم تا مجبور شود از لینک‌ها استفاده کند
-          rm -rf /home/runner/.buildozer/android
-          mkdir -p /home/runner/.buildozer/android/platform
-          # SDK را به مسیری که بیلدوزر دنبال می‌کند لینک می‌کنیم
-          ln -sfn "$ANDROID_SDK_ROOT" /home/runner/.buildozer/android/platform/android-sdk
-          # NDK: بیلدوزر دنبال پوشه‌ای با نام android-ndk-r25b می‌گردد؛ همان را به NDK نصب‌شده لینک کن
-          ln -sfn "$ANDROID_SDK_ROOT/ndk/25.2.9519653" /home/runner/.buildozer/android/platform/android-ndk-r25b
-          # بیلدوزر به طور هاردکد دنبال sdkmanager در tools/bin می‌گردد؛ همان را هم لینک می‌کنیم
-          mkdir -p /home/runner/.buildozer/android/platform/android-sdk/tools/bin
-          ln -sfn "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
-                 /home/runner/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager
-          # چک سریع
-          ls -l /home/runner/.buildozer/android/platform
-          ls -l /home/runner/.buildozer/android/platform/android-sdk/build-tools/33.0.2/aidl
-
-      - name: Build APK (debug)
-        run: |
-          echo "ANDROIDAPI=$ANDROIDAPI ANDROIDMINAPI=$ANDROIDMINAPI"
-          buildozer -v android debug
+          buildozer android debug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: app-apk
+          name: arbtracker-apk
           path: bin/*.apk
