@@ -1,7 +1,7 @@
 name: Build Android APK
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch: {}   # اجرا به‌صورت دستی
 
 jobs:
   build:
@@ -16,7 +16,7 @@ jobs:
         with:
           python-version: '3.10'
 
-      # >>> مهم: جاوا 17
+      # جاوا 17 برای sdkmanager
       - name: Set up Java 17 (Temurin)
         uses: actions/setup-java@v4
         with:
@@ -29,6 +29,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y zip unzip python3-pip libffi-dev libssl-dev build-essential
 
+      # نصب commandline-tools + SDK/NDK در خود workspace (عدم نیاز به دسترسی سیستمی)
       - name: Install Android cmdline tools & SDK
         env:
           ANDROID_HOME: ${{ github.workspace }}/android-sdk
@@ -61,7 +62,7 @@ jobs:
           ANDROIDNDK: ${{ github.workspace }}/android-sdk/ndk/25.2.9519653
           PATH: ${{ github.workspace }}/android-sdk/platform-tools:${{ github.workspace }}/android-sdk/build-tools/34.0.0:${{ github.workspace }}/android-sdk/cmdline-tools/latest/bin:${{ env.PATH }}
         run: |
-          buildozer android debug
+          buildozer -v android debug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
