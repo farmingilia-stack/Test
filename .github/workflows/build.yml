@@ -25,7 +25,7 @@ jobs:
       - name: Install system deps
         run: |
           sudo apt-get update
-          # ✅ git اضافه شد
+          # git حتماً نصب می‌شود
           sudo apt-get install -y git zip unzip python3-pip libffi-dev libssl-dev build-essential
           python -m pip install --upgrade pip
 
@@ -35,14 +35,14 @@ jobs:
           ANDROID_SDK_ROOT: ${{ github.workspace }}/android-sdk
         shell: bash
         run: |
+          set -e
           mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
           curl -sSL https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -o cmdtools.zip
           unzip -q cmdtools.zip -d "$ANDROID_SDK_ROOT/cmdline-tools"
           mv "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools" "$ANDROID_SDK_ROOT/cmdline-tools/latest"
           mkdir -p "$HOME/.android" && touch "$HOME/.android/repositories.cfg"
-          # قبول لایسنس‌ها؛ Broken pipe را نادیده بگیر
+          # لایسنس‌ها را قبول کن (Broken pipe اشکالی ندارد)
           ( yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses ) || true
-          # نصب پکیج‌ها
           "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
             "platform-tools" \
             "platforms;android-34" \
@@ -54,13 +54,16 @@ jobs:
           python -m pip install cython buildozer
 
       - name: Build APK (debug)
-        env:
-          ANDROID_HOME: ${{ github.workspace }}/android-sdk
-          ANDROID_SDK_ROOT: ${{ github.workspace }}/android-sdk
-          ANDROIDSDK: ${{ github.workspace }}/android-sdk
-          ANDROIDNDK: ${{ github.workspace }}/android-sdk/ndk/25.2.9519653
-          PATH: ${{ github.workspace }}/android-sdk/platform-tools:${{ github.workspace }}/android-sdk/build-tools/34.0.0:${{ github.workspace }}/android-sdk/cmdline-tools/latest/bin:${{ env.PATH }}
-        run: buildozer -v android debug
+        shell: bash
+        run: |
+          set -e
+          export ANDROID_HOME="${GITHUB_WORKSPACE}/android-sdk"
+          export ANDROID_SDK_ROOT="${GITHUB_WORKSPACE}/android-sdk"
+          export ANDROIDSDK="${GITHUB_WORKSPACE}/android-sdk"
+          export ANDROIDNDK="${GITHUB_WORKSPACE}/android-sdk/ndk/25.2.9519653"
+          # ✅ فقط به PATH اضافه می‌کنیم، PATH سیستم حفظ می‌شود (git، python، … در دسترس می‌مانند)
+          export PATH="$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/build-tools/34.0.0:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
+          buildozer -v android debug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
