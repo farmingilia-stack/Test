@@ -25,7 +25,8 @@ jobs:
       - name: Install system deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y zip unzip python3-pip libffi-dev libssl-dev build-essential
+          # ✅ git اضافه شد
+          sudo apt-get install -y git zip unzip python3-pip libffi-dev libssl-dev build-essential
           python -m pip install --upgrade pip
 
       - name: Install Android cmdline tools & SDK
@@ -39,11 +40,9 @@ jobs:
           unzip -q cmdtools.zip -d "$ANDROID_SDK_ROOT/cmdline-tools"
           mv "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools" "$ANDROID_SDK_ROOT/cmdline-tools/latest"
           mkdir -p "$HOME/.android" && touch "$HOME/.android/repositories.cfg"
-
-          # قبول همه‌ی لایسنس‌ها؛ Broken pipe را نادیده بگیر
+          # قبول لایسنس‌ها؛ Broken pipe را نادیده بگیر
           ( yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses ) || true
-
-          # نصب پکیج‌های لازم
+          # نصب پکیج‌ها
           "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
             "platform-tools" \
             "platforms;android-34" \
