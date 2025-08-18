@@ -1,7 +1,7 @@
 name: Build Android APK
 
 on:
-  workflow_dispatch: {}   # اجرا به‌صورت دستی
+  workflow_dispatch: {}
 
 jobs:
   build:
@@ -16,7 +16,6 @@ jobs:
         with:
           python-version: '3.10'
 
-      # جاوا 17 - بدون cache: gradle
       - name: Set up Java 17 (Temurin)
         uses: actions/setup-java@v4
         with:
@@ -27,22 +26,25 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y zip unzip python3-pip libffi-dev libssl-dev build-essential
+          python -m pip install --upgrade pip
 
-      # نصب cmdline-tools + SDK/NDK در خود workspace
       - name: Install Android cmdline tools & SDK
         env:
           ANDROID_HOME: ${{ github.workspace }}/android-sdk
           ANDROID_SDK_ROOT: ${{ github.workspace }}/android-sdk
         shell: bash
         run: |
-          set -e
           mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
           curl -sSL https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -o cmdtools.zip
           unzip -q cmdtools.zip -d "$ANDROID_SDK_ROOT/cmdline-tools"
           mv "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools" "$ANDROID_SDK_ROOT/cmdline-tools/latest"
           mkdir -p "$HOME/.android" && touch "$HOME/.android/repositories.cfg"
-          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses
-          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
+
+          # قبول همه‌ی لایسنس‌ها؛ Broken pipe را نادیده بگیر
+          ( yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses ) || true
+
+          # نصب پکیج‌های لازم
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
             "platform-tools" \
             "platforms;android-34" \
             "build-tools;34.0.0" \
@@ -50,7 +52,6 @@ jobs:
 
       - name: Install buildozer
         run: |
-          python -m pip install --upgrade pip
           python -m pip install cython buildozer
 
       - name: Build APK (debug)
