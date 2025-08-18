@@ -25,7 +25,6 @@ jobs:
       - name: Install system deps
         run: |
           sudo apt-get update
-          # git حتماً نصب می‌شود
           sudo apt-get install -y git zip unzip python3-pip libffi-dev libssl-dev build-essential
           python -m pip install --upgrade pip
 
@@ -36,16 +35,19 @@ jobs:
         shell: bash
         run: |
           set -e
-          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
+          SDK="$ANDROID_SDK_ROOT"
+          mkdir -p "$SDK/cmdline-tools"
           curl -sSL https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -o cmdtools.zip
-          unzip -q cmdtools.zip -d "$ANDROID_SDK_ROOT/cmdline-tools"
-          mv "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools" "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+          unzip -q cmdtools.zip -d "$SDK/cmdline-tools"
+          mv "$SDK/cmdline-tools/cmdline-tools" "$SDK/cmdline-tools/latest"
           mkdir -p "$HOME/.android" && touch "$HOME/.android/repositories.cfg"
-          # لایسنس‌ها را قبول کن (Broken pipe اشکالی ندارد)
-          ( yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses ) || true
-          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
+          # قبول لایسنس‌ها (Broken pipe مهم نیست)
+          ( yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --licenses ) || true
+          # نصب پکیج‌های لازم + هر دو نسخه build-tools
+          "$SDK/cmdline-tools/latest/bin/sdkmanager" \
             "platform-tools" \
             "platforms;android-34" \
+            "build-tools;36.0.0" \
             "build-tools;34.0.0" \
             "ndk;25.2.9519653"
 
@@ -53,16 +55,31 @@ jobs:
         run: |
           python -m pip install cython buildozer
 
+      - name: Prepare SDK/NDK for Buildozer
+        shell: bash
+        run: |
+          set -e
+          SDK="${GITHUB_WORKSPACE}/android-sdk"
+          NDK="$SDK/ndk/25.2.9519653"
+          mkdir -p "$HOME/.buildozer/android/platform"
+          # لینک دادن SDK و NDK به مسیر داخلی بیلدوزر
+          ln -sfn "$SDK" "$HOME/.buildozer/android/platform/android-sdk"
+          ln -sfn "$NDK" "$HOME/.buildozer/android/platform/android-ndk-r25b"
+          ls -la "$HOME/.buildozer/android/platform"
+
       - name: Build APK (debug)
         shell: bash
         run: |
           set -e
-          export ANDROID_HOME="${GITHUB_WORKSPACE}/android-sdk"
           export ANDROID_SDK_ROOT="${GITHUB_WORKSPACE}/android-sdk"
-          export ANDROIDSDK="${GITHUB_WORKSPACE}/android-sdk"
-          export ANDROIDNDK="${GITHUB_WORKSPACE}/android-sdk/ndk/25.2.9519653"
-          # ✅ فقط به PATH اضافه می‌کنیم، PATH سیستم حفظ می‌شود (git، python، … در دسترس می‌مانند)
-          export PATH="$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/build-tools/34.0.0:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
+          export ANDROID_HOME="${ANDROID_SDK_ROOT}"
+          export ANDROIDSDK="${ANDROID_SDK_ROOT}"
+          export ANDROIDNDK="${ANDROID_SDK_ROOT}/ndk/25.2.9519653"
+          # فقط اضافه کردن به PATH (PATH سیستم حفظ می‌شود تا git و … در دسترس بمانند)
+          export PATH="$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/build-tools/36.0.0:$ANDROID_SDK_ROOT/build-tools/34.0.0:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
+          # چک aidl
+          which aidl || true
+          test -x "$ANDROID_SDK_ROOT/build-tools/36.0.0/aidl" || (echo "aidl not found!" && ls -la "$ANDROID_SDK_ROOT/build-tools/36.0.0" && exit 1)
           buildozer -v android debug
 
       - name: Upload APK
